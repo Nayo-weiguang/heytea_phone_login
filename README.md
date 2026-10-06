@@ -1,78 +1,118 @@
-# 手机号登录后端（Python 侧）
+# heytea_phone_login
 
-这个目录**只有登录**,没有界面。前端用 `heyteago-diy` 自带的 Next.js WebUI,
-我们只在他们的 `web/components/` 里加了一个登录面板。
+用手机号 + 短信验证码登录喜茶 GO 的后端实现。
+
+对外只暴露一个命令行入口:读 stdin 一个 JSON,写 stdout 一个 JSON。
+上层服务负责起短命进程调用它。
 
 ```
-浏览器 (他们的 WebUI)
-   │  腾讯滑块 -> ticket
-   ▼
-Go 服务 heyteago-diy  (他们的代码, 只多了 /api/auth/* 三个路由)
-   │  exec  python heytea_login_step.py  {"op":"sms"|"login",...}
-   ▼
-本目录  ← Secure-Transmission 握手 / 加密 / 反滥用签名
+调用方
+  │  stdin:  {"op":"sms","phone":"..."}
+  ▼
+heytea_login_step.py        ← 编排:加密请求、组装头、解析响应
+  │
+  ├── lib/heytea_cryption.py    手机号 AES 加密
+  └── lib/heytea_secure_sdk.py  Secure-Transmission 握手 / 会话密钥 / 反滥用签名
+  ▼
+stdout: {"ok":true,...}
 ```
 
-上传、存草稿、画布渲染全部走他们原封不动的 `heyteaapi` client,和这里无关。
+## 能力
 
-## 文件
-
-| 文件 | 作用 |
-|---|---|
-| `heytea_login_step.py` | 步骤执行器。stdin 一个 JSON, stdout 一个 JSON |
-| `lib/heytea_secure_sdk.py` | Secure-Transmission(Unicorn 模拟 `libsdk_core.so`) |
-| `lib/heytea_cryption.py` | 手机号 AES 加密 |
-
-## 调用方式
-
-Go 侧每次起一个短命进程:
-
-```bash
-echo '{"op":"ping"}'                                            | python heytea_login_step.py
-echo '{"op":"sms","phone":"138...","captcha":"<ticket>"}'       | python heytea_login_step.py
-echo '{"op":"login","phone":"...","code":"123456","captcha":"<ticket>"}' | python heytea_login_step.py
-```
+| op | 作用 | 需要什么 |
+|---|---|---|
+| `ping` | 探活,返回签名模式和 so 路径 | 无 |
+| `sms` | 发短信验证码 | `phone`(+ 首次需人机 ticket) |
+| `login` | 短信码换 token | `phone`、`code`(+ 人机 ticket) |
 
 返回恒为一行 JSON:`{"ok":true,...}` 或 `{"ok":false,"error":"..."}`。
-日志走 stderr。
+日志走 stderr,不污染 stdout。
+
+## 人机验证
+
+腾讯滑块(appid `197451715`)。**ticket 是一次性的** —— 发短信消耗一张,
+登录消耗另一张,所以整条流程要过两次。
+
+`captcha` 字段是**选填**的。脚本不带票也会先把请求发出去探一次,
+服务端回 `needCaptcha` 时如实转达:
+
+```json
+{"ok":false,"needCaptcha":true,"stage":"sms","error":"..."}
+```
+
+调用方按这个流程走:
+
+```
+1. 不带 ticket 调一次
+2. 若 needCaptcha -> 弹腾讯滑块 -> 拿 ticket
+3. 带上 ticket 再调一次
+```
+
+判定逻辑在 `looks_like_need_captcha()`:优先看显式的 `needCaptcha` 字段;
+字段缺失时,只在明确失败(`ok=false` 或 `code!=0`)才用「人机 / captcha」
+关键词兜底。**不能只按关键词匹配** —— 成功响应里也带
+「点「登录」时会自动再弹一次人机验证」的 note,会误判。
+
+## 调用示例
+
+```bash
+echo '{"op":"ping"}'                        | python heytea_login_step.py
+echo '{"op":"sms","phone":"138..."}'         | python heytea_login_step.py
+echo '{"op":"sms","phone":"138...","captcha":"<ticket>"}' | python heytea_login_step.py
+echo '{"op":"login","phone":"138...","code":"123456"}' | python heytea_login_step.py
+```
 
 ## 配置(环境变量)
 
-| 变量 | 说明 |
+| 变量 | 默认 | 说明 |
+|---|---|---|
+| `HEYTEA_SDK_SO` | 无 | `libsdk_core.so` 路径 —— **必须设** |
+| `SIGN_MODE` | `exec` | 签名方式,目前只支持 `exec` |
+| `SIGN_JAR` | 空 | 签名 oracle jar 路径 |
+| `SIGN_SO` | 空 | 签名用 `.so` 路径 |
+| `SIGN_ENV` | `prod` | `prod` / `test` |
+| `APP_CODE` | `164` | versionCode,**不是版本名** |
+| `APP_HOST` | `https://app-go.heytea.com` | 目标域名 |
+
+## 依赖的专有二进制
+
+以下两个不在仓库里,需自行从 APK 获取后用环境变量指向:
+
+| 文件 | 位置 |
 |---|---|
-| `HEYTEA_LOGIN_PYTHON` | python 路径(Go 侧 `HEYTEA_LOGIN_PYTHON`) |
-| `HEYTEA_LOGIN_SCRIPT` | 本脚本路径(Go 侧 `HEYTEA_LOGIN_SCRIPT`) |
-| `HEYTEA_SDK_SO` | `libsdk_core.so` 位置 —— **必须设**,它不在仓库里 |
-| `SIGN_MODE` | `exec`(目前只支持这个) |
-| `SIGN_JAR` | `sign-oracle.jar`,用他们 `bin/` 里那份 |
-| `SIGN_SO` | `libheyteago.so`,用他们 `bin/` 里那份 |
-| `SIGN_ENV` | 默认 `prod` |
-| `APP_CODE` | 默认 `164`(versionCode,不是版本名) |
-| `APP_HOST` | 默认 `https://app-go.heytea.com` |
+| `libsdk_core.so` | 喜茶 GO APK 的 `lib/arm64-v8a/` |
+| `libheyteago.so` | 喜茶 GO APK 的 `lib/arm64-v8a/` |
 
-## 需要的两个专有 .so
+## 安装
 
-都不在仓库里,版权不属于本项目:
-
-- `libsdk_core.so`(100 KB)—— 在喜茶GO APK 的 `apk/lib/arm64-v8a/`,设 `HEYTEA_SDK_SO` 指过去
-- `libheyteago.so` —— 他们 `bin/` 里已有一份(SHA256 与逆向出来的一致),直接用
-
-## 为什么要过两次人机验证
-
-腾讯滑块的 ticket **一次性**。发短信消耗一张,登录消耗一张。
-所以 WebUI 上点「获取验证码」弹一次,点「登录」再弹一次。
+```bash
+pip install -r requirements.txt
+```
 
 ## 已知问题
 
-`lib/heytea_secure_sdk.py` 里 `encrypt_request()` 和 `decrypt_response()`
-实测是**原样返回**(Unicorn 那侧的 JNI 分发没跑通)。握手是好的,ticket 和
-secure 头都是真的。
+`lib/heytea_secure_sdk.py` 的 `encrypt_request()` / `decrypt_response()`
+实测**原样返回**(模拟层的 JNI 分发未跑通)。握手本身是好的,ticket 和
+secure 请求头都是真实可用的。
 
-login_v1 接受明文 body,所以流程能走通;但要求密文的接口会失败。
+`login_v1` 接受明文 body,所以登录流程能走通;但要求密文的接口会失败。
 
-## 注意
+## 注意事项
 
-每次重新登录都会把手机上的喜茶GO App 踢下线(同账号单 app 会话),
-每天短信条数有限。验证码必须手动过,本工具不做自动绕过。
+- 同一账号在新设备登录会把旧会话踢下线
+- 短信条数有限
+- 人机验证必须手动过,本项目不做自动绕过
+- 自动化调用第三方接口通常违反其服务条款,请自行评估风险
 
-自动化第三方接口通常违反其服务条款,请自行评估风险。
+## 目录
+
+```
+heytea_login_step.py          步骤执行器(入口)
+lib/heytea_cryption.py        手机号加密
+lib/heytea_secure_sdk.py      Secure-Transmission + 反滥用签名
+st-probe/                     协议逆向用的探针(分析工具,非运行时依赖)
+fixtures/                     测试用样本
+```
+
+`st-probe/` 是分析 Secure-Transmission 协议时写的探针,用于核对签名、
+偏移量和握手流程。它不是运行登录的依赖,需要单独的 classpath 才能跑。

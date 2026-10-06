@@ -204,7 +204,7 @@ def grab(o, key):
 def looks_like_need_captcha(j, raw_text=""):
     """判断响应是不是在说"要过人机验证"。
 
-    依据 Go 侧 handleAuthSMS 的三种返回（internal/transport/httpapi/server.go）：
+    依据服务端的三种返回（带路径只是便于查证契约，不是运行依赖）：
 
       1. 没随请求带 ticket -> HTTP 400 {"message":"缺少人机验证","needCaptcha":true}
       2. ticket 被拒       -> HTTP 502 {"ok":false,"code":..,"message":..,"needCaptcha":true}
