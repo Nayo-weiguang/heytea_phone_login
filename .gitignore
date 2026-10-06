@@ -1,0 +1,52 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# Java / Gradle 产物
+*.class
+*.jar
+!gradle/wrapper/gradle-wrapper.jar
+
+# 原生二进制 —— 均为喜茶 APK 提取的专有资产，不随本仓库分发
+# 需要时自行从 APK 获取，见 README 的"前置准备"
+*.so
+*.dylib
+*.dll
+*.a
+*.lib
+
+# 日志 / 崩溃转储
+*.log
+hs_err_pid*.log
+replay_pid*.log
+
+# 运行时生成，含本机绝对路径，由 Gradle :app:dumpCp 重新产出
+st-probe/cp.txt
+
+# 凭证 / 会话材料（绝对不要提交）
+*_token.txt
+app_token.txt
+handshake_material.pkl
+*.pkl
+login_ready.flag
+code.txt
+secrets/
+_local/
+
+# 编辑器 / 系统
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# 本地备份 / 旧版留档（不入库）
+*.bak
+_old_webui*
+
+# 大文件 / 安装包
+*.zip
+*.apk
+*.7z
